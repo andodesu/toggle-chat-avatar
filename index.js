@@ -8,14 +8,12 @@ let mainCheckboxCache = null;
 function getMainSettingsCheckbox() {
     if (mainCheckboxCache) return mainCheckboxCache;
 
-    // Try common IDs
     let checkbox = document.querySelector('#hideChatAvatars, [name="hideChatAvatars"]');
     if (checkbox) {
         mainCheckboxCache = checkbox;
         return checkbox;
     }
 
-    // Fallback: search by label text
     const allCheckboxes = document.querySelectorAll('input[type="checkbox"]');
     for (const el of allCheckboxes) {
         const label = el.closest('label') || document.querySelector(`label[for="${el.id}"]`);
@@ -28,14 +26,14 @@ function getMainSettingsCheckbox() {
 }
 
 function applyHideChatAvatars(state) {
-    // Use the core's built-in function if available
+    // Use the core's function if available
     if (typeof window.switchHideChatAvatars === 'function') {
         if (window.power_user) {
             window.power_user.hideChatAvatars_enabled = state;
         }
         window.switchHideChatAvatars();
     } else {
-        // Fallback: toggle class and style
+        // Fallback: toggle class and style directly
         document.body.classList.toggle('hideChatAvatars', state);
         document.querySelectorAll('.mes .avatar').forEach(avatar => {
             avatar.style.display = state ? 'none' : '';
@@ -49,13 +47,18 @@ function addMagicWandToggle() {
     if (!extensionsMenu) return;
     if (document.getElementById('toggle-chat-avatar-item')) return;
 
-    // --- Read the saved state from context.settings (which is now loaded) ---
-    const isHidden = context.settings?.hideChatAvatars || false;
+    // --- Read the current state from the body's class (the core's UI indicator) ---
+    const isHidden = document.body.classList.contains('hideChatAvatars');
 
-    // --- Apply the state (this will hide avatars if needed) ---
+    // --- Ensure context.settings is updated (for other parts of the app) ---
+    if (context.settings) {
+        context.settings.hideChatAvatars = isHidden;
+    }
+
+    // --- Apply the state (should already be applied, but ensure it) ---
     applyHideChatAvatars(isHidden);
 
-    // --- Create our extension menu item ---
+    // --- Create our menu item ---
     const menuItem = document.createElement('div');
     menuItem.id = 'toggle-chat-avatar-item';
     menuItem.className = 'list-group-item flex-container flexGap5';
@@ -76,26 +79,22 @@ function addMagicWandToggle() {
     menuItem.appendChild(label);
     extensionsMenu.appendChild(menuItem);
 
-    // --- Sync the main checkbox (silently, no event dispatch) ---
+    // --- Sync main checkbox silently ---
     const mainCheck = getMainSettingsCheckbox();
     if (mainCheck) {
         mainCheck.checked = isHidden;
     }
 
-    // --- Listener: Extension toggle → update core and main checkbox ---
+    // --- Listener: Extension toggle → update all ---
     toggle.addEventListener('change', function() {
         const newState = this.checked;
-        // Update the persistent setting
         if (context.settings) {
             context.settings.hideChatAvatars = newState;
         }
-        // Apply via core function
         applyHideChatAvatars(newState);
-        // Save
         if (context.saveSettings) {
             context.saveSettings();
         }
-        // Sync main checkbox (silent)
         if (mainCheck) {
             mainCheck.checked = newState;
         }
@@ -107,21 +106,22 @@ function addMagicWandToggle() {
             const newState = this.checked;
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
-                // Update our setting and UI
                 if (context.settings) {
                     context.settings.hideChatAvatars = newState;
                 }
                 applyHideChatAvatars(newState);
-                // The core already saves via its own handler, so we don't call saveSettings here
+                // The core saves automatically, so no need to call saveSettings here
             }
         });
     }
 
-    // --- Re-apply after messages render (fixes refresh visibility) ---
+    // --- Re-apply after messages render (handles late-loaded avatars) ---
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        const currentState = context.settings?.hideChatAvatars || false;
-        applyHideChatAvatars(currentState);
-        // Sync checkboxes if they drifted
+        // Read the actual state from the body class (in case core toggled it elsewhere)
+        const currentState = document.body.classList.contains('hideChatAvatars');
+        if (context.settings) {
+            context.settings.hideChatAvatars = currentState;
+        }
         if (toggle.checked !== currentState) {
             toggle.checked = currentState;
         }
@@ -132,13 +132,21 @@ function addMagicWandToggle() {
 
     // Safety net: re-apply after a short delay
     setTimeout(() => {
-        const currentState = context.settings?.hideChatAvatars || false;
-        applyHideChatAvatars(currentState);
+        const currentState = document.body.classList.contains('hideChatAvatars');
+        if (context.settings) {
+            context.settings.hideChatAvatars = currentState;
+        }
+        if (toggle.checked !== currentState) {
+            toggle.checked = currentState;
+        }
+        if (mainCheck && mainCheck.checked !== currentState) {
+            mainCheck.checked = currentState;
+        }
     }, 300);
 }
 
 function init() {
-    // ONLY run after the app is fully ready
+    // Only run after app is fully ready
     eventSource.on(event_types.APP_READY, addMagicWandToggle);
 }
 
