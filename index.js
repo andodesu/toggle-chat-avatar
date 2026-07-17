@@ -28,25 +28,20 @@ function getMainSettingsCheckbox() {
 }
 
 function getCurrentState() {
-    // 1. Try the core's power_user variable (the source of truth)
+    // Try the core's power_user variable (the source of truth)
     if (window.power_user && typeof window.power_user.hideChatAvatars_enabled !== 'undefined') {
         return window.power_user.hideChatAvatars_enabled;
     }
-    // 2. Try context.settings (fallback)
+    // Fallback to context.settings
     const context = getContext();
     if (context.settings && typeof context.settings.hideChatAvatars !== 'undefined') {
         return context.settings.hideChatAvatars;
-    }
-    // 3. Try SillyTavern global (if available)
-    if (window.SillyTavern?.settings && typeof window.SillyTavern.settings.hideChatAvatars !== 'undefined') {
-        return window.SillyTavern.settings.hideChatAvatars;
     }
     // Default
     return false;
 }
 
 function setCurrentState(state) {
-    // Update all possible sources to stay consistent
     const context = getContext();
     if (window.power_user) {
         window.power_user.hideChatAvatars_enabled = state;
@@ -54,21 +49,17 @@ function setCurrentState(state) {
     if (context.settings) {
         context.settings.hideChatAvatars = state;
     }
-    if (window.SillyTavern?.settings) {
-        window.SillyTavern.settings.hideChatAvatars = state;
-    }
 }
 
 function applyHideChatAvatars(state) {
-    // Use the core's function if available
+    // Use the core's built-in function if available
     if (typeof window.switchHideChatAvatars === 'function') {
-        // Ensure power_user is set before calling
         if (window.power_user) {
             window.power_user.hideChatAvatars_enabled = state;
         }
         window.switchHideChatAvatars();
     } else {
-        // Fallback: toggle class and style
+        // Fallback
         document.body.classList.toggle('hideChatAvatars', state);
         document.querySelectorAll('.mes .avatar').forEach(avatar => {
             avatar.style.display = state ? 'none' : '';
@@ -82,7 +73,7 @@ function addMagicWandToggle() {
     if (!extensionsMenu) return;
     if (document.getElementById('toggle-chat-avatar-item')) return;
 
-    // Read current state (now after APP_READY)
+    // Read current state (now after APP_READY, so it's correct)
     const isHidden = getCurrentState();
 
     // Apply to UI
@@ -136,7 +127,7 @@ function addMagicWandToggle() {
                 toggle.checked = newState;
                 setCurrentState(newState);
                 applyHideChatAvatars(newState);
-                // Core saves automatically via its own handler
+                // Core saves automatically via its own handler, so no need to save here
             }
         });
     }
@@ -162,7 +153,7 @@ function addMagicWandToggle() {
 }
 
 function init() {
-    // Only run after the app is fully ready
+    // ONLY run after the app is fully ready
     eventSource.on(event_types.APP_READY, addMagicWandToggle);
 }
 
