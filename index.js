@@ -4,21 +4,18 @@ import { eventSource, event_types } from '/script.js';
 const MODULE_NAME = 'toggle-chat-avatar';
 
 let mainCheckboxCache = null;
-let debugCounter = 0;
-
-function log(step, data) {
-    console.log(`[DEBUG ${++debugCounter}] ${step}:`, data);
-}
 
 function getMainSettingsCheckbox() {
     if (mainCheckboxCache) return mainCheckboxCache;
 
-    let checkbox = document.querySelector('#hideChatAvatars');
+    // Try common IDs
+    let checkbox = document.querySelector('#hideChatAvatars, [name="hideChatAvatars"]');
     if (checkbox) {
         mainCheckboxCache = checkbox;
         return checkbox;
     }
 
+    // Fallback: search by label text
     const allCheckboxes = document.querySelectorAll('input[type="checkbox"]');
     for (const el of allCheckboxes) {
         const label = el.closest('label') || document.querySelector(`label[for="${el.id}"]`);
@@ -30,36 +27,65 @@ function getMainSettingsCheckbox() {
     return null;
 }
 
+function getCurrentState() {
+    // 1. Try the core's power_user variable (the source of truth)
+    if (window.power_user && typeof window.power_user.hideChatAvatars_enabled !== 'undefined') {
+        return window.power_user.hideChatAvatars_enabled;
+    }
+    // 2. Try context.settings (fallback)
+    const context = getContext();
+    if (context.settings && typeof context.settings.hideChatAvatars !== 'undefined') {
+        return context.settings.hideChatAvatars;
+    }
+    // 3. Try SillyTavern global (if available)
+    if (window.SillyTavern?.settings && typeof window.SillyTavern.settings.hideChatAvatars !== 'undefined') {
+        return window.SillyTavern.settings.hideChatAvatars;
+    }
+    // Default
+    return false;
+}
+
+function setCurrentState(state) {
+    // Update all possible sources to stay consistent
+    const context = getContext();
+    if (window.power_user) {
+        window.power_user.hideChatAvatars_enabled = state;
+    }
+    if (context.settings) {
+        context.settings.hideChatAvatars = state;
+    }
+    if (window.SillyTavern?.settings) {
+        window.SillyTavern.settings.hideChatAvatars = state;
+    }
+}
+
 function applyHideChatAvatars(state) {
-    log('applyHideChatAvatars called', { state, bodyClass: document.body.classList.contains('hideChatAvatars') });
-    document.body.classList.toggle('hideChatAvatars', state);
-    document.querySelectorAll('.mes .avatar').forEach(avatar => {
-        avatar.style.display = state ? 'none' : '';
-    });
+    // Use the core's function if available
+    if (typeof window.switchHideChatAvatars === 'function') {
+        // Ensure power_user is set before calling
+        if (window.power_user) {
+            window.power_user.hideChatAvatars_enabled = state;
+        }
+        window.switchHideChatAvatars();
+    } else {
+        // Fallback: toggle class and style
+        document.body.classList.toggle('hideChatAvatars', state);
+        document.querySelectorAll('.mes .avatar').forEach(avatar => {
+            avatar.style.display = state ? 'none' : '';
+        });
+    }
 }
 
 function addMagicWandToggle() {
-    log('addMagicWandToggle started');
     const context = getContext();
     const extensionsMenu = document.getElementById('extensionsMenu');
-    if (!extensionsMenu) {
-        log('extensionsMenu not found, aborting');
-        return;
-    }
-    if (document.getElementById('toggle-chat-avatar-item')) {
-        log('toggle already exists, aborting');
-        return;
-    }
+    if (!extensionsMenu) return;
+    if (document.getElementById('toggle-chat-avatar-item')) return;
 
-    // Log current state from both sources
-    const settingsState = context.settings?.hideChatAvatars;
-    const powerUserState = window.power_user?.hideChatAvatars_enabled;
-    log('Initial states', { settingsState, powerUserState });
+    // Read current state (now after APP_READY)
+    const isHidden = getCurrentState();
 
-    const isHidden = settingsState || false;
-    log('Using isHidden', isHidden);
-
-    // Apply (this will toggle the UI)
+    // Apply to UI
     applyHideChatAvatars(isHidden);
 
     // Create menu item
@@ -72,7 +98,6 @@ function addMagicWandToggle() {
     toggle.type = 'checkbox';
     toggle.id = 'toggle-chat-avatar-checkbox';
     toggle.checked = isHidden;
-    log('Extension checkbox set to', toggle.checked);
 
     const label = document.createElement('label');
     label.htmlFor = 'toggle-chat-avatar-checkbox';
@@ -88,27 +113,12 @@ function addMagicWandToggle() {
     const mainCheck = getMainSettingsCheckbox();
     if (mainCheck) {
         mainCheck.checked = isHidden;
-        log('Main checkbox set to', mainCheck.checked);
-    } else {
-        log('Main checkbox NOT found');
     }
 
-    // Log after setting checkboxes
-    log('After initial sync', {
-        extChecked: toggle.checked,
-        mainChecked: mainCheck ? mainCheck.checked : 'N/A',
-        bodyClass: document.body.classList.contains('hideChatAvatars'),
-        settingsState: context.settings?.hideChatAvatars,
-        powerUserState: window.power_user?.hideChatAvatars_enabled
-    });
-
-    // Extension toggle → update
+    // Extension toggle → update all
     toggle.addEventListener('change', function() {
         const newState = this.checked;
-        log('Extension toggle changed', newState);
-        if (context.settings) {
-            context.settings.hideChatAvatars = newState;
-        }
+        setCurrentState(newState);
         applyHideChatAvatars(newState);
         if (context.saveSettings) {
             context.saveSettings();
@@ -122,22 +132,20 @@ function addMagicWandToggle() {
     if (mainCheck) {
         mainCheck.addEventListener('change', function() {
             const newState = this.checked;
-            log('Main checkbox changed', newState);
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
-                if (context.settings) {
-                    context.settings.hideChatAvatars = newState;
-                }
+                setCurrentState(newState);
                 applyHideChatAvatars(newState);
+                // Core saves automatically via its own handler
             }
         });
     }
 
-    // Re-apply after messages
+    // Re-apply after messages render (fixes visibility on refresh)
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        const currentState = context.settings?.hideChatAvatars ?? false;
-        log('CHAT_CHANGED event', currentState);
+        const currentState = getCurrentState();
         applyHideChatAvatars(currentState);
+        // Sync checkboxes
         if (toggle.checked !== currentState) {
             toggle.checked = currentState;
         }
@@ -146,26 +154,16 @@ function addMagicWandToggle() {
         }
     });
 
+    // Safety net: re-apply after a short delay
     setTimeout(() => {
-        const currentState = context.settings?.hideChatAvatars ?? false;
-        log('setTimeout (300ms) re-apply', currentState);
+        const currentState = getCurrentState();
         applyHideChatAvatars(currentState);
     }, 300);
-
-    log('addMagicWandToggle finished');
 }
 
 function init() {
-    log('init called');
-    eventSource.on(event_types.APP_READY, () => {
-        log('APP_READY event received');
-        addMagicWandToggle();
-    });
-    // Also try to run immediately if already ready
-    if (document.body.classList.contains('ready') || document.getElementById('extensionsMenu')) {
-        log('App already ready, calling addMagicWandToggle directly');
-        addMagicWandToggle();
-    }
+    // Only run after the app is fully ready
+    eventSource.on(event_types.APP_READY, addMagicWandToggle);
 }
 
 init();
