@@ -15,7 +15,7 @@ function addMagicWandToggle() {
     if (!extensionsMenu) return;
     if (document.getElementById('toggle-chat-avatar-item')) return;
 
-    // Read from the core's powerUserSettings
+    // Read from core's powerUserSettings
     const isHidden = context.powerUserSettings?.hideChatAvatars_enabled ?? false;
     applyUiState(isHidden);
 
@@ -49,54 +49,47 @@ function addMagicWandToggle() {
     toggle.addEventListener('change', function() {
         const newState = this.checked;
 
-        // Update core's powerUserSettings
+        // 1. Update the core's source of truth (both places)
+        if (window.power_user) {
+            window.power_user.hideChatAvatars_enabled = newState;
+        }
         if (context.powerUserSettings) {
             context.powerUserSettings.hideChatAvatars_enabled = newState;
         }
 
-        // Also update window.power_user if it exists
-        if (window.power_user) {
-            window.power_user.hideChatAvatars_enabled = newState;
-        }
-
-        // Apply UI
+        // 2. Apply UI (body class + avatars)
         applyUiState(newState);
 
-        // Sync main checkbox and trigger its change event
-        if (mainCheck) {
-            mainCheck.checked = newState;
-            // Use jQuery if available to ensure both native and jQuery handlers fire
-            if (typeof $ === 'function') {
-                $(mainCheck).trigger('change');
-            } else {
-                mainCheck.dispatchEvent(new Event('change', { bubbles: true }));
-            }
+        // 3. Call the core's UI update function
+        if (typeof window.switchHideChatAvatars === 'function') {
+            window.switchHideChatAvatars();
         }
 
-        // Direct save as a safety net
-        if (typeof context.saveSettingsDebounced === 'function') {
-            context.saveSettingsDebounced();
-        } else if (typeof window.saveSettingsDebounced === 'function') {
+        // 4. Save via core's debounced save
+        if (typeof window.saveSettingsDebounced === 'function') {
             window.saveSettingsDebounced();
+        } else if (typeof context.saveSettingsDebounced === 'function') {
+            context.saveSettingsDebounced();
         } else if (context.saveSettings) {
             context.saveSettings();
+        }
+
+        // 5. Sync the main checkbox (silent)
+        if (mainCheck) {
+            mainCheck.checked = newState;
         }
     });
 
     // --- Main checkbox -> sync back to our toggle ---
     if (mainCheck) {
-        const handler = function() {
+        mainCheck.addEventListener('change', function() {
             const newState = this.checked;
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
+                // The core already updated power_user and saved, we just sync UI
                 applyUiState(newState);
             }
-        };
-        if (typeof $ === 'function') {
-            $(mainCheck).on('change', handler);
-        } else {
-            mainCheck.addEventListener('change', handler);
-        }
+        });
     }
 
     // --- Re-apply after messages render ---
