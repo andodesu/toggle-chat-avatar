@@ -1,51 +1,61 @@
 import { getContext } from '/scripts/extensions.js';
 import { eventSource, event_types } from '/script.js';
 
-// Global debug object
-window.__debug__ = {
-    context: null,
-    toggle: null,
-    mainCheck: null,
-    state: null,
-};
-
-let mainCheckboxCache = null;
+function log(msg, data) {
+    console.log(`[EXT] ${msg}`, data ?? '');
+}
 
 function getMainSettingsCheckbox() {
-    if (mainCheckboxCache) return mainCheckboxCache;
-    const checkbox = document.querySelector('#hideChatAvatars, [name="hideChatAvatars"]');
-    mainCheckboxCache = checkbox;
-    return checkbox;
+    return document.querySelector('#hideChatAvatars, [name="hideChatAvatars"]');
 }
 
 function applyUiState(state) {
     document.body.classList.toggle('hideChatAvatars', state);
-    // Log state change
-    console.log(`[EXT] applyUiState: ${state}, body class now: ${document.body.classList.contains('hideChatAvatars')}`);
+    log('applyUiState', { state, bodyClass: document.body.classList.contains('hideChatAvatars') });
 }
 
 function addMagicWandToggle() {
     const context = getContext();
-    window.__debug__.context = context;
+    log('=== CONTEXT OBJECT ===', context);
+    log('typeof context:', typeof context);
+    log('context keys:', Object.keys(context || {}));
+    log('context.settings:', context?.settings);
+    log('context.settings keys:', context?.settings ? Object.keys(context.settings) : 'undefined');
+
+    // Also check window.SillyTavern
+    log('window.SillyTavern:', window.SillyTavern);
+    if (window.SillyTavern) {
+        log('SillyTavern keys:', Object.keys(window.SillyTavern));
+        log('SillyTavern.settings:', window.SillyTavern.settings);
+        log('SillyTavern.settings keys:', window.SillyTavern.settings ? Object.keys(window.SillyTavern.settings) : 'undefined');
+    }
 
     const extensionsMenu = document.getElementById('extensionsMenu');
     if (!extensionsMenu) {
-        console.error('[EXT] extensionsMenu not found');
+        log('extensionsMenu not found');
         return;
     }
     if (document.getElementById('toggle-chat-avatar-item')) {
-        console.log('[EXT] toggle already exists');
+        log('toggle already exists');
         return;
     }
 
-    // Read state from core settings
-    const isHidden = context.settings?.hideChatAvatars ?? false;
-    console.log(`[EXT] Initial state from context.settings: ${isHidden}`);
+    // Try to read from context.settings, then window.SillyTavern.settings, then body class
+    let isHidden = false;
+    if (context?.settings && typeof context.settings.hideChatAvatars !== 'undefined') {
+        isHidden = context.settings.hideChatAvatars;
+        log('read from context.settings', isHidden);
+    } else if (window.SillyTavern?.settings && typeof window.SillyTavern.settings.hideChatAvatars !== 'undefined') {
+        isHidden = window.SillyTavern.settings.hideChatAvatars;
+        log('read from window.SillyTavern.settings', isHidden);
+    } else {
+        isHidden = document.body.classList.contains('hideChatAvatars');
+        log('fallback to body class', isHidden);
+    }
 
-    // Apply UI
     applyUiState(isHidden);
 
-    // Create extension menu item
+    // Create menu item
     const menuItem = document.createElement('div');
     menuItem.id = 'toggle-chat-avatar-item';
     menuItem.className = 'list-group-item flex-container flexGap5';
@@ -55,7 +65,6 @@ function addMagicWandToggle() {
     toggle.type = 'checkbox';
     toggle.id = 'toggle-chat-avatar-checkbox';
     toggle.checked = isHidden;
-    window.__debug__.toggle = toggle;
 
     const label = document.createElement('label');
     label.htmlFor = 'toggle-chat-avatar-checkbox';
@@ -67,79 +76,91 @@ function addMagicWandToggle() {
     menuItem.appendChild(label);
     extensionsMenu.appendChild(menuItem);
 
-    // Get main checkbox
     const mainCheck = getMainSettingsCheckbox();
-    window.__debug__.mainCheck = mainCheck;
-    console.log(`[EXT] Main checkbox found: ${!!mainCheck}`);
-
-    // Sync main checkbox silently
+    log('mainCheck element:', mainCheck);
     if (mainCheck) {
         mainCheck.checked = isHidden;
-        console.log(`[EXT] Synced main checkbox to: ${isHidden}`);
+        log('mainCheck.checked set to', isHidden);
     }
 
-    // Extension toggle → update core via main checkbox's change event
+    // Store for console inspection
+    window.__debug__ = { context, toggle, mainCheck, state: isHidden };
+
+    // Extension toggle
     toggle.addEventListener('change', function() {
         const newState = this.checked;
-        console.log(`[EXT] Toggle changed to: ${newState}`);
-        // Update context.settings
-        if (context.settings) {
+        log('Extension toggled to', newState);
+        // Update all possible sources
+        if (context?.settings) {
             context.settings.hideChatAvatars = newState;
-            console.log(`[EXT] Updated context.settings.hideChatAvatars = ${newState}`);
+            log('updated context.settings', newState);
         }
-        // Apply UI immediately
+        if (window.SillyTavern?.settings) {
+            window.SillyTavern.settings.hideChatAvatars = newState;
+            log('updated window.SillyTavern.settings', newState);
+        }
         applyUiState(newState);
-        // Let the core handle saving by dispatching a change event on the main checkbox
         if (mainCheck) {
             mainCheck.checked = newState;
             mainCheck.dispatchEvent(new Event('change', { bubbles: true }));
-            console.log(`[EXT] Dispatched change event on main checkbox`);
+            log('dispatched change event on mainCheck');
         } else {
-            console.warn('[EXT] mainCheck not found – cannot trigger core save');
+            log('mainCheck not found – cannot dispatch');
         }
-        // Update debug state
         window.__debug__.state = newState;
     });
 
-    // Main checkbox → sync back to our toggle
+    // Main checkbox listener
     if (mainCheck) {
         mainCheck.addEventListener('change', function() {
             const newState = this.checked;
-            console.log(`[EXT] Main checkbox changed to: ${newState}`);
+            log('Main checkbox changed to', newState);
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
-                console.log(`[EXT] Synced extension toggle to: ${newState}`);
-                if (context.settings) {
+                if (context?.settings) {
                     context.settings.hideChatAvatars = newState;
                 }
+                if (window.SillyTavern?.settings) {
+                    window.SillyTavern.settings.hideChatAvatars = newState;
+                }
                 applyUiState(newState);
+                log('synced extension toggle to', newState);
             }
         });
     }
 
-    // Re-apply after new messages are rendered
+    // Re-apply on CHAT_CHANGED
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        const currentState = context.settings?.hideChatAvatars ?? false;
-        console.log(`[EXT] CHAT_CHANGED, re-applying state: ${currentState}`);
+        let currentState = false;
+        if (context?.settings && typeof context.settings.hideChatAvatars !== 'undefined') {
+            currentState = context.settings.hideChatAvatars;
+        } else if (window.SillyTavern?.settings && typeof window.SillyTavern.settings.hideChatAvatars !== 'undefined') {
+            currentState = window.SillyTavern.settings.hideChatAvatars;
+        } else {
+            currentState = document.body.classList.contains('hideChatAvatars');
+        }
+        log('CHAT_CHANGED re-apply', currentState);
         applyUiState(currentState);
-        if (toggle.checked !== currentState) {
-            toggle.checked = currentState;
-        }
-        if (mainCheck && mainCheck.checked !== currentState) {
-            mainCheck.checked = currentState;
-        }
+        if (toggle.checked !== currentState) toggle.checked = currentState;
+        if (mainCheck && mainCheck.checked !== currentState) mainCheck.checked = currentState;
     });
 
-    // Expose final state
-    window.__debug__.state = isHidden;
-    console.log('[EXT] Extension setup complete.');
+    log('Extension setup complete');
 }
 
 function init() {
-    console.log('[EXT] init waiting for APP_READY');
+    log('init waiting for APP_READY');
     eventSource.on(event_types.APP_READY, () => {
-        console.log('[EXT] APP_READY received');
+        log('APP_READY received');
         addMagicWandToggle();
+        // After setup, log debug info
+        setTimeout(() => {
+            log('=== DEBUG STATE AFTER SETUP ===');
+            log('context.settings.hideChatAvatars:', window.__debug__.context?.settings?.hideChatAvatars);
+            log('toggle.checked:', window.__debug__.toggle?.checked);
+            log('mainCheck?.checked:', window.__debug__.mainCheck?.checked);
+            log('body class:', document.body.classList.contains('hideChatAvatars'));
+        }, 500);
     });
 }
 
