@@ -1,21 +1,27 @@
 import { getContext } from '/scripts/extensions.js';
 import { eventSource, event_types } from '/script.js';
 
-function getMainSettingsCheckbox() {
-    return document.querySelector('#hideChatAvatarsEnabled');
-}
-
 function applyUiState(state) {
     document.body.classList.toggle('hideChatAvatars', state);
+}
+
+function saveSettings(context) {
+    // Use core's debounced save if available, otherwise fallback to normal save
+    if (typeof window.saveSettingsDebounced === 'function') {
+        window.saveSettingsDebounced();
+    } else if (typeof context.saveSettingsDebounced === 'function') {
+        context.saveSettingsDebounced();
+    } else if (typeof context.saveSettings === 'function') {
+        context.saveSettings();
+    }
 }
 
 function addMagicWandToggle() {
     const context = getContext();
     const extensionsMenu = document.getElementById('extensionsMenu');
-    if (!extensionsMenu) return;
-    if (document.getElementById('toggle-chat-avatar-item')) return;
+    if (!extensionsMenu || document.getElementById('toggle-chat-avatar-item')) return;
 
-    // Read from core's powerUserSettings
+    // Read current state from core's source of truth
     const isHidden = context.powerUserSettings?.hideChatAvatars_enabled ?? false;
     applyUiState(isHidden);
 
@@ -40,7 +46,8 @@ function addMagicWandToggle() {
     menuItem.appendChild(label);
     extensionsMenu.appendChild(menuItem);
 
-    const mainCheck = getMainSettingsCheckbox();
+    // Cache main checkbox
+    const mainCheck = document.querySelector('#hideChatAvatarsEnabled');
     if (mainCheck) {
         mainCheck.checked = isHidden;
     }
@@ -49,7 +56,7 @@ function addMagicWandToggle() {
     toggle.addEventListener('change', function() {
         const newState = this.checked;
 
-        // 1. Update the core's source of truth (both places)
+        // Update core's sources
         if (window.power_user) {
             window.power_user.hideChatAvatars_enabled = newState;
         }
@@ -57,36 +64,29 @@ function addMagicWandToggle() {
             context.powerUserSettings.hideChatAvatars_enabled = newState;
         }
 
-        // 2. Apply UI (body class + avatars)
+        // Apply UI
         applyUiState(newState);
 
-        // 3. Call the core's UI update function
+        // Apply via core's UI updater (if available)
         if (typeof window.switchHideChatAvatars === 'function') {
             window.switchHideChatAvatars();
         }
 
-        // 4. Save via core's debounced save
-        if (typeof window.saveSettingsDebounced === 'function') {
-            window.saveSettingsDebounced();
-        } else if (typeof context.saveSettingsDebounced === 'function') {
-            context.saveSettingsDebounced();
-        } else if (context.saveSettings) {
-            context.saveSettings();
-        }
+        // Save
+        saveSettings(context);
 
-        // 5. Sync the main checkbox (silent)
+        // Sync main checkbox silently
         if (mainCheck) {
             mainCheck.checked = newState;
         }
     });
 
-    // --- Main checkbox -> sync back to our toggle ---
+    // --- Main checkbox → sync to extension ---
     if (mainCheck) {
         mainCheck.addEventListener('change', function() {
             const newState = this.checked;
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
-                // The core already updated power_user and saved, we just sync UI
                 applyUiState(newState);
             }
         });
@@ -96,8 +96,12 @@ function addMagicWandToggle() {
     eventSource.on(event_types.CHAT_CHANGED, () => {
         const currentState = context.powerUserSettings?.hideChatAvatars_enabled ?? false;
         applyUiState(currentState);
-        if (toggle.checked !== currentState) toggle.checked = currentState;
-        if (mainCheck && mainCheck.checked !== currentState) mainCheck.checked = currentState;
+        if (toggle.checked !== currentState) {
+            toggle.checked = currentState;
+        }
+        if (mainCheck && mainCheck.checked !== currentState) {
+            mainCheck.checked = currentState;
+        }
     });
 }
 
