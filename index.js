@@ -1,6 +1,14 @@
 import { getContext } from '/scripts/extensions.js';
 import { eventSource, event_types } from '/script.js';
 
+// Global debug object
+window.__debug__ = {
+    context: null,
+    toggle: null,
+    mainCheck: null,
+    state: null,
+};
+
 let mainCheckboxCache = null;
 
 function getMainSettingsCheckbox() {
@@ -12,16 +20,27 @@ function getMainSettingsCheckbox() {
 
 function applyUiState(state) {
     document.body.classList.toggle('hideChatAvatars', state);
+    // Log state change
+    console.log(`[EXT] applyUiState: ${state}, body class now: ${document.body.classList.contains('hideChatAvatars')}`);
 }
 
 function addMagicWandToggle() {
     const context = getContext();
-    const extensionsMenu = document.getElementById('extensionsMenu');
-    if (!extensionsMenu) return;
-    if (document.getElementById('toggle-chat-avatar-item')) return;
+    window.__debug__.context = context;
 
-    // Read state from core settings (if undefined, default to false)
+    const extensionsMenu = document.getElementById('extensionsMenu');
+    if (!extensionsMenu) {
+        console.error('[EXT] extensionsMenu not found');
+        return;
+    }
+    if (document.getElementById('toggle-chat-avatar-item')) {
+        console.log('[EXT] toggle already exists');
+        return;
+    }
+
+    // Read state from core settings
     const isHidden = context.settings?.hideChatAvatars ?? false;
+    console.log(`[EXT] Initial state from context.settings: ${isHidden}`);
 
     // Apply UI
     applyUiState(isHidden);
@@ -36,6 +55,7 @@ function addMagicWandToggle() {
     toggle.type = 'checkbox';
     toggle.id = 'toggle-chat-avatar-checkbox';
     toggle.checked = isHidden;
+    window.__debug__.toggle = toggle;
 
     const label = document.createElement('label');
     label.htmlFor = 'toggle-chat-avatar-checkbox';
@@ -49,18 +69,23 @@ function addMagicWandToggle() {
 
     // Get main checkbox
     const mainCheck = getMainSettingsCheckbox();
+    window.__debug__.mainCheck = mainCheck;
+    console.log(`[EXT] Main checkbox found: ${!!mainCheck}`);
 
     // Sync main checkbox silently
     if (mainCheck) {
         mainCheck.checked = isHidden;
+        console.log(`[EXT] Synced main checkbox to: ${isHidden}`);
     }
 
     // Extension toggle → update core via main checkbox's change event
     toggle.addEventListener('change', function() {
         const newState = this.checked;
+        console.log(`[EXT] Toggle changed to: ${newState}`);
         // Update context.settings
         if (context.settings) {
             context.settings.hideChatAvatars = newState;
+            console.log(`[EXT] Updated context.settings.hideChatAvatars = ${newState}`);
         }
         // Apply UI immediately
         applyUiState(newState);
@@ -68,28 +93,34 @@ function addMagicWandToggle() {
         if (mainCheck) {
             mainCheck.checked = newState;
             mainCheck.dispatchEvent(new Event('change', { bubbles: true }));
+            console.log(`[EXT] Dispatched change event on main checkbox`);
+        } else {
+            console.warn('[EXT] mainCheck not found – cannot trigger core save');
         }
-        // If mainCheck is not found, we can't trigger core save, but we'll assume it exists.
+        // Update debug state
+        window.__debug__.state = newState;
     });
 
     // Main checkbox → sync back to our toggle
     if (mainCheck) {
         mainCheck.addEventListener('change', function() {
             const newState = this.checked;
+            console.log(`[EXT] Main checkbox changed to: ${newState}`);
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
+                console.log(`[EXT] Synced extension toggle to: ${newState}`);
                 if (context.settings) {
                     context.settings.hideChatAvatars = newState;
                 }
                 applyUiState(newState);
-                // The core's handler already saved, so we don't need to do anything else.
             }
         });
     }
 
-    // Re-apply after new messages are rendered (fixes late-loaded avatars)
+    // Re-apply after new messages are rendered
     eventSource.on(event_types.CHAT_CHANGED, () => {
         const currentState = context.settings?.hideChatAvatars ?? false;
+        console.log(`[EXT] CHAT_CHANGED, re-applying state: ${currentState}`);
         applyUiState(currentState);
         if (toggle.checked !== currentState) {
             toggle.checked = currentState;
@@ -98,10 +129,18 @@ function addMagicWandToggle() {
             mainCheck.checked = currentState;
         }
     });
+
+    // Expose final state
+    window.__debug__.state = isHidden;
+    console.log('[EXT] Extension setup complete.');
 }
 
 function init() {
-    eventSource.on(event_types.APP_READY, addMagicWandToggle);
+    console.log('[EXT] init waiting for APP_READY');
+    eventSource.on(event_types.APP_READY, () => {
+        console.log('[EXT] APP_READY received');
+        addMagicWandToggle();
+    });
 }
 
 init();
