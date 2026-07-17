@@ -5,87 +5,59 @@ function log(msg, data) {
     console.log(`[EXT] ${msg}`, data ?? '');
 }
 
-function inspectContext(obj, path = 'context') {
-    if (!obj || typeof obj !== 'object') {
-        log(`${path}: ${String(obj)} (${typeof obj})`);
-        return;
-    }
-    const keys = Object.keys(obj);
-    log(`${path} keys:`, keys);
-    for (const key of keys) {
-        const val = obj[key];
-        if (typeof val === 'object' && val !== null) {
-            if (key === 'settings') {
-                log(`${path}.${key}:`, val);
-                log(`${path}.${key} keys:`, Object.keys(val));
-            } else if (typeof val === 'function') {
-                log(`${path}.${key}: function`);
-            } else {
-                // Don't recursively log huge objects to avoid spam
-                if (['chat', 'characters', 'groups', 'accountStorage'].includes(key)) {
-                    log(`${path}.${key}: ${Array.isArray(val) ? `[${val.length}]` : 'object'}`);
-                } else {
-                    log(`${path}.${key}:`, val);
-                }
-            }
-        } else {
-            log(`${path}.${key}:`, val);
-        }
-    }
-}
-
-function inspectLocalStorage() {
-    const allKeys = Object.keys(localStorage);
-    log('localStorage keys:', allKeys);
-    const relevant = allKeys.filter(k => /settings|hide|avatar/i.test(k));
-    if (relevant.length) {
-        for (const key of relevant) {
-            log(`localStorage[${key}] =`, localStorage.getItem(key));
-        }
-    }
-}
-
 function getMainSettingsCheckbox() {
-    return document.querySelector('#hideChatAvatars, [name="hideChatAvatars"]');
-}
-
-function applyUiState(state) {
-    document.body.classList.toggle('hideChatAvatars', state);
-    log('applyUiState', { state, bodyClass: document.body.classList.contains('hideChatAvatars') });
+    // Try multiple selectors
+    let el = document.querySelector('#hideChatAvatars, [name="hideChatAvatars"], input[type="checkbox"][value*="hideChatAvatars"]');
+    if (el) return el;
+    // Fallback: search all checkboxes by label text
+    const all = document.querySelectorAll('input[type="checkbox"]');
+    for (const cb of all) {
+        const label = cb.closest('label') || document.querySelector(`label[for="${cb.id}"]`);
+        if (label && label.textContent.includes('Hide Chat Avatars')) {
+            return cb;
+        }
+        // Also check parent label if wrapped
+        if (cb.parentElement && cb.parentElement.tagName === 'LABEL' && cb.parentElement.textContent.includes('Hide Chat Avatars')) {
+            return cb;
+        }
+    }
+    return null;
 }
 
 function addMagicWandToggle() {
     const context = getContext();
     log('=== CONTEXT OBJECT ===');
-    inspectContext(context);
 
-    // Also check window
-    log('=== window.SillyTavern ===');
-    if (window.SillyTavern) {
-        inspectContext(window.SillyTavern, 'SillyTavern');
+    // Inspect powerUserSettings
+    log('context.powerUserSettings:', context.powerUserSettings);
+    if (context.powerUserSettings) {
+        log('powerUserSettings keys:', Object.keys(context.powerUserSettings));
+        // Look for hideChatAvatars keys
+        for (const key of Object.keys(context.powerUserSettings)) {
+            if (/hide|avatar|chat/i.test(key)) {
+                log(`powerUserSettings.${key} =`, context.powerUserSettings[key]);
+            }
+        }
     }
 
-    // Inspect localStorage
-    inspectLocalStorage();
+    // Also check if there's a 'settings' property in any other place
+    for (const key of Object.keys(context)) {
+        if (typeof context[key] === 'object' && context[key] !== null && key !== 'powerUserSettings') {
+            const obj = context[key];
+            if (typeof obj === 'object' && 'hideChatAvatars' in obj) {
+                log(`context.${key}.hideChatAvatars =`, obj.hideChatAvatars);
+            }
+        }
+    }
 
-    // Determine current state: try to read from where?
-    // We'll use body class for now, but we need to find the real source.
     const isHidden = document.body.classList.contains('hideChatAvatars');
-    log('Using body class as state:', isHidden);
-
-    applyUiState(isHidden);
+    log('Body class state:', isHidden);
 
     const extensionsMenu = document.getElementById('extensionsMenu');
-    if (!extensionsMenu) {
-        log('extensionsMenu not found');
-        return;
-    }
-    if (document.getElementById('toggle-chat-avatar-item')) {
-        log('toggle already exists');
-        return;
-    }
+    if (!extensionsMenu) { log('extensionsMenu not found'); return; }
+    if (document.getElementById('toggle-chat-avatar-item')) { log('toggle exists'); return; }
 
-    // Create menu item
+    // Create toggle
     const menuItem = document.createElement('div');
     menuItem.id = 'toggle-chat-avatar-item';
     menuItem.className = 'list-group-item flex-container flexGap5';
@@ -110,54 +82,26 @@ function addMagicWandToggle() {
     log('mainCheck element:', mainCheck);
     if (mainCheck) {
         mainCheck.checked = isHidden;
+        log('mainCheck.checked set to', isHidden);
+    } else {
+        log('mainCheck not found – will try to locate later');
     }
 
-    // Debug object with dump method
-    window.__debug__ = {
-        context,
-        toggle,
-        mainCheck,
-        state: isHidden,
-        dump: function() {
-            console.log('=== DEBUG DUMP ===');
-            console.log('toggle.checked:', this.toggle?.checked);
-            console.log('mainCheck?.checked:', this.mainCheck?.checked);
-            console.log('body class:', document.body.classList.contains('hideChatAvatars'));
-            console.log('context keys:', Object.keys(this.context || {}));
-            // Try to find hideChatAvatars in any property
-            for (const key of Object.keys(this.context || {})) {
-                if (typeof this.context[key] === 'object' && this.context[key] !== null) {
-                    if (key === 'settings') {
-                        console.log(`context.${key}.hideChatAvatars:`, this.context[key]?.hideChatAvatars);
-                    } else {
-                        const val = this.context[key];
-                        if (val && typeof val === 'object' && 'hideChatAvatars' in val) {
-                            console.log(`context.${key}.hideChatAvatars:`, val.hideChatAvatars);
-                        }
-                    }
-                }
-            }
-            console.log('localStorage keys:', Object.keys(localStorage));
-            console.log('SillyTavern libs:', window.SillyTavern?.libs);
-        }
-    };
+    // Store for debugging
+    window.__debug__ = { context, toggle, mainCheck, state: isHidden };
 
-    // Extension toggle
+    // Toggle handler
     toggle.addEventListener('change', function() {
         const newState = this.checked;
         log('Extension toggled to', newState);
-        // Try to update context if settings exist
-        if (context.settings) {
-            context.settings.hideChatAvatars = newState;
-            log('updated context.settings', newState);
-        }
-        // If not, try other properties
-        for (const key of Object.keys(context)) {
-            if (typeof context[key] === 'object' && context[key] !== null) {
-                if (key === 'settings') continue; // already tried
-                if ('hideChatAvatars' in context[key]) {
-                    context[key].hideChatAvatars = newState;
-                    log(`updated context.${key}.hideChatAvatars`, newState);
+        // Try to update powerUserSettings (if it has a relevant key)
+        if (context.powerUserSettings) {
+            // Try common key names
+            const possibleKeys = ['hideChatAvatars', 'hideChatAvatars_enabled', 'hideChatAvatarsEnabled'];
+            for (const key of possibleKeys) {
+                if (key in context.powerUserSettings) {
+                    context.powerUserSettings[key] = newState;
+                    log(`Updated powerUserSettings.${key} =`, newState);
                 }
             }
         }
@@ -165,22 +109,17 @@ function addMagicWandToggle() {
         if (mainCheck) {
             mainCheck.checked = newState;
             mainCheck.dispatchEvent(new Event('change', { bubbles: true }));
-            log('dispatched change event on mainCheck');
         }
         window.__debug__.state = newState;
     });
 
-    // Main checkbox listener
     if (mainCheck) {
         mainCheck.addEventListener('change', function() {
             const newState = this.checked;
             log('Main checkbox changed to', newState);
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
-                // Update any possible source
-                if (context.settings) context.settings.hideChatAvatars = newState;
                 applyUiState(newState);
-                log('synced extension toggle to', newState);
             }
         });
     }
@@ -197,13 +136,34 @@ function addMagicWandToggle() {
     log('Extension setup complete');
 }
 
+function applyUiState(state) {
+    document.body.classList.toggle('hideChatAvatars', state);
+    log('applyUiState', { state, bodyClass: document.body.classList.contains('hideChatAvatars') });
+}
+
 function init() {
     log('init waiting for APP_READY');
     eventSource.on(event_types.APP_READY, () => {
         log('APP_READY received');
         addMagicWandToggle();
         setTimeout(() => {
-            window.__debug__.dump();
+            if (window.__debug__) {
+                console.log('=== DEBUG DUMP ===');
+                console.log('toggle.checked:', window.__debug__.toggle?.checked);
+                console.log('mainCheck:', window.__debug__.mainCheck);
+                console.log('mainCheck?.checked:', window.__debug__.mainCheck?.checked);
+                console.log('body class:', document.body.classList.contains('hideChatAvatars'));
+                console.log('powerUserSettings:', window.__debug__.context?.powerUserSettings);
+                // Check if any key in powerUserSettings matches hideChat
+                const pus = window.__debug__.context?.powerUserSettings;
+                if (pus) {
+                    for (const k of Object.keys(pus)) {
+                        if (/hide|avatar|chat/i.test(k)) {
+                            console.log(`powerUserSettings.${k} =`, pus[k]);
+                        }
+                    }
+                }
+            }
         }, 500);
     });
 }
