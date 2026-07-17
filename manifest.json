@@ -1,0 +1,9 @@
+{
+  "display_name": "Toggle Chat Avatar",
+  "name": "toggle-chat-avatar",
+  "version": "1.0.0",
+  "author": "Ando",
+  "description": "Adds a toggle for Hide Chat Avatars to the Magic Wand menu.",
+  "js": "index.js",
+  "loading_order": 10
+}
