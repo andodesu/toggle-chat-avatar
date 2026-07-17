@@ -9,34 +9,17 @@ function applyUiState(state) {
     document.body.classList.toggle('hideChatAvatars', state);
 }
 
-function findSaveMethod(context) {
-    // Search for a save function on the context
-    for (const key of Object.keys(context)) {
-        const val = context[key];
-        if (typeof val === 'function' && /save/i.test(key)) {
-            console.log(`[EXT] Found save method: context.${key}`);
-            return val;
-        }
-    }
-    // Also check window
-    if (typeof window.saveSettingsDebounced === 'function') {
-        console.log('[EXT] Found saveSettingsDebounced on window');
-        return window.saveSettingsDebounced;
-    }
-    return null;
-}
-
 function addMagicWandToggle() {
     const context = getContext();
     const extensionsMenu = document.getElementById('extensionsMenu');
     if (!extensionsMenu) return;
     if (document.getElementById('toggle-chat-avatar-item')) return;
 
-    // Read from core's powerUserSettings
+    // Read from the core's powerUserSettings
     const isHidden = context.powerUserSettings?.hideChatAvatars_enabled ?? false;
     applyUiState(isHidden);
 
-    // Create extension menu item
+    // Create menu item
     const menuItem = document.createElement('div');
     menuItem.id = 'toggle-chat-avatar-item';
     menuItem.className = 'list-group-item flex-container flexGap5';
@@ -62,72 +45,67 @@ function addMagicWandToggle() {
         mainCheck.checked = isHidden;
     }
 
-    // Find save method once
-    const saveMethod = findSaveMethod(context);
-    if (saveMethod) {
-        console.log('[EXT] Save method available:', saveMethod);
-    } else {
-        console.warn('[EXT] No save method found – will rely on main checkbox events');
-    }
-
     // --- Extension toggle ---
     toggle.addEventListener('change', function() {
         const newState = this.checked;
-        console.log('[EXT] Toggling to', newState);
 
-        // 1. Update powerUserSettings
+        // Update core's powerUserSettings
         if (context.powerUserSettings) {
             context.powerUserSettings.hideChatAvatars_enabled = newState;
         }
 
-        // 2. Apply UI
-        applyUiState(newState);
-
-        // 3. Sync main checkbox
-        if (mainCheck) {
-            mainCheck.checked = newState;
-            // Dispatch multiple events to ensure core handlers fire
-            mainCheck.dispatchEvent(new Event('change', { bubbles: true }));
-            mainCheck.dispatchEvent(new Event('input', { bubbles: true }));
-            mainCheck.dispatchEvent(new Event('click', { bubbles: true }));
-            console.log('[EXT] Dispatched events on main checkbox');
+        // Also update window.power_user if it exists
+        if (window.power_user) {
+            window.power_user.hideChatAvatars_enabled = newState;
         }
 
-        // 4. If we found a save method, call it directly
-        if (saveMethod) {
-            try {
-                saveMethod();
-                console.log('[EXT] Called save method directly');
-            } catch (e) {
-                console.warn('[EXT] Save method call failed:', e);
+        // Apply UI
+        applyUiState(newState);
+
+        // Sync main checkbox and trigger its change event
+        if (mainCheck) {
+            mainCheck.checked = newState;
+            // Use jQuery if available to ensure both native and jQuery handlers fire
+            if (typeof $ === 'function') {
+                $(mainCheck).trigger('change');
+            } else {
+                mainCheck.dispatchEvent(new Event('change', { bubbles: true }));
             }
         }
 
-        // Log state after toggle
-        console.log('[EXT] After toggle - powerUserSettings.hideChatAvatars_enabled:', context.powerUserSettings?.hideChatAvatars_enabled);
+        // Direct save as a safety net
+        if (typeof context.saveSettingsDebounced === 'function') {
+            context.saveSettingsDebounced();
+        } else if (typeof window.saveSettingsDebounced === 'function') {
+            window.saveSettingsDebounced();
+        } else if (context.saveSettings) {
+            context.saveSettings();
+        }
     });
 
-    // --- Main checkbox → sync back ---
+    // --- Main checkbox -> sync back to our toggle ---
     if (mainCheck) {
-        mainCheck.addEventListener('change', function() {
+        const handler = function() {
             const newState = this.checked;
-            console.log('[EXT] Main checkbox changed to', newState);
             if (toggle.checked !== newState) {
                 toggle.checked = newState;
                 applyUiState(newState);
             }
-        });
+        };
+        if (typeof $ === 'function') {
+            $(mainCheck).on('change', handler);
+        } else {
+            mainCheck.addEventListener('change', handler);
+        }
     }
 
-    // --- Re-apply on CHAT_CHANGED ---
+    // --- Re-apply after messages render ---
     eventSource.on(event_types.CHAT_CHANGED, () => {
         const currentState = context.powerUserSettings?.hideChatAvatars_enabled ?? false;
         applyUiState(currentState);
         if (toggle.checked !== currentState) toggle.checked = currentState;
         if (mainCheck && mainCheck.checked !== currentState) mainCheck.checked = currentState;
     });
-
-    console.log('[EXT] Extension setup complete');
 }
 
 function init() {
